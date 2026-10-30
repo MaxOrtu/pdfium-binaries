@@ -60,6 +60,7 @@ case "$OS" in
 
   win)
     apply_patch "$PATCHES/win/build.patch" build
+    bash "$PATCHES/win/delayload.sh" BUILD.gn
 
     VERSION=${PDFium_VERSION:-0.0.0.0}
     YEAR=$(date +%Y)

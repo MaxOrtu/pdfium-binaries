@@ -1,0 +1,53 @@
+# Companion fork: pdfium.dll for Windows x64 with gdi32/user32 delay-loaded,
+# so it loads inside a sandbox with Win32k system calls disabled (see
+# patches/win/delayload.sh). Pinned to the PDFium version validated by the
+# companion prototypes; bump `branch` deliberately.
+name: Companion Windows x64
+
+on:
+  push:
+    branches: [companion]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: chromium/8125
+      target_os: win
+      target_cpu: x64
+
+  verify:
+    name: Verify delay-load
+    needs: build
+    runs-on: windows-2022
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: staging
+      - name: gdi32 and user32 must be delay-loaded, not direct imports
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe | Where-Object FullName -like '*Hostx64\x64*' | Select-Object -First 1
+          $out = & $dumpbin.FullName /nologo /dependents staging\bin\pdfium.dll | Out-String
+          Write-Output $out
+          $direct = ($out -split 'delay load dependencies')[0]
+          $delay = ($out -split 'delay load dependencies')[1]
+          if ($direct -match '(?i)gdi32\.dll|user32\.dll') { throw "gdi32/user32 are still direct imports" }
+          if ($delay -notmatch '(?i)gdi32\.dll' -or $delay -notmatch '(?i)user32\.dll') { throw "gdi32/user32 not found among delay-load dependencies" }
+          Write-Output "OK: gdi32 and user32 are delay-loaded"
+          (Get-FileHash staging\bin\pdfium.dll -Algorithm SHA256).Hash | Tee-Object -FilePath staging\bin\pdfium.dll.sha256
+      - uses: actions/upload-artifact@v6
+        with:
+          name: pdfium-win-x64-delayload
+          path: staging/
